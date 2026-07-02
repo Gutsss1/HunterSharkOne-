@@ -1,0 +1,92 @@
+import json
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+
+TOKEN = "СЮДА_ВСТАВЬ_ТВОЙ_ТОКЕН"
+
+try:
+    with open('codes.json', 'r', encoding='utf-8') as f:
+        CODES_DB = json.load(f)
+except FileNotFoundError:
+    CODES_DB = {}
+    print("⚠️ Файл codes.json не найден!")
+
+LANGUAGES = {
+    'ru': {
+        'welcome': "🦈 Привет! Отправь мне код из видео, и я скажу название фильма.",
+        'found': "🎬 Название фильма: *{name}*\n🔢 Код: `{code}`",
+        'not_found': "❌ Код не найден.",
+        'lang_changed': "✅ Язык изменен на русский.",
+        'choose_lang': "🌐 Выбери язык:"
+    },
+    'en': {
+        'welcome': "🦈 Hello! Send me the code from the video and I'll tell you the movie name.",
+        'found': "🎬 Movie title: *{name}*\n🔢 Code: `{code}`",
+        'not_found': "❌ Code not found.",
+        'lang_changed': "✅ Language changed to English.",
+        'choose_lang': "🌐 Choose your language:"
+    }
+}
+
+user_langs = {}
+
+def get_text(user_id, key, **kwargs):
+    lang = user_langs.get(user_id, 'en')
+    text = LANGUAGES.get(lang, LANGUAGES['en']).get(key, '')
+    return text.format(**kwargs) if kwargs else text
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = update.effective_user.language_code
+    if lang not in LANGUAGES:
+        lang = 'en'
+    user_langs[user_id] = lang
+    await update.message.reply_text(get_text(user_id, 'welcome'))
+
+async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_code = update.message.text.strip().upper()
+    
+    if user_code in CODES_DB:
+        film_name = CODES_DB[user_code]["name"]
+        CODES_DB[user_code]["views"] += 1
+        with open('codes.json', 'w', encoding='utf-8') as f:
+            json.dump(CODES_DB, f, ensure_ascii=False, indent=2)
+        await update.message.reply_text(
+            get_text(user_id, 'found', name=film_name, code=user_code),
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(get_text(user_id, 'not_found'))
+
+async def language_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🇷🇺 Русский", callback_data='lang_ru')],
+        [InlineKeyboardButton("🇬🇧 English", callback_data='lang_en')]
+    ]
+    await update.message.reply_text(
+        "🌐 Выбери язык / Choose language:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    lang = query.data.split('_')[1]
+    if lang in LANGUAGES:
+        user_langs[user_id] = lang
+        await query.edit_message_text(get_text(user_id, 'lang_changed'))
+
+def main():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("lang", language_menu))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code))
+    print("🦈 Бот запущен!")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
